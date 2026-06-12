@@ -37,6 +37,8 @@ parent: Solution deployment
 TEAM uses AWS CloudTrail Lake for querying, auditing and logging API activities and actions performed by a user during the period of elevated access.
 Create a Cloudtrail Lake organization event datastore in the dedicated TEAM account that stores all log events for all AWS account in your organization
 
+> **Note:** AWS CloudTrail Lake is no longer available to new customers (announced 2026/5). If your organization cannot create a new event data store, set `CLOUDTRAIL_AUDIT_LOGS=disabled`. TEAM will deploy without CloudTrail Lake: the approval workflow works as normal, the in-app "Session activity" view is turned off, and session auditing should instead be performed by correlating TEAM request records with standard CloudTrail (event history or an organization trail) in the target accounts. Organizations that already use CloudTrail Lake can keep the existing behaviour by passing the ARN of an existing event data store.
+
 ## AWS Secrets Manager
 TEAM allows you to use external repositories for deploying the solution. 
 Create a secret in AWS Secret Manager containting your repository url and Access token in Secrets manager as shown below 

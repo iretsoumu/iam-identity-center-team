@@ -23,7 +23,12 @@ import {
 
 const { Sha256 } = crypto;
 const REGION = process.env.REGION;
-const EventDataStore = (process.env.EVENT_DATA_STORE).split("/").pop();
+// CloudTrail Lake is no longer available to new AWS customers. When the
+// cloudtrailLake custom resource is deployed with CloudTrailAuditLogs="disabled",
+// no EventDataStore exists and EVENT_DATA_STORE contains the literal "disabled".
+const RAW_EVENT_DATA_STORE = process.env.EVENT_DATA_STORE || "";
+const AUDIT_DISABLED = RAW_EVENT_DATA_STORE === "" || RAW_EVENT_DATA_STORE === "disabled";
+const EventDataStore = AUDIT_DISABLED ? null : RAW_EVENT_DATA_STORE.split("/").pop();
 const GRAPHQL_ENDPOINT = process.env.API_TEAM_GRAPHQLAPIENDPOINTOUTPUT;
 
 // const {
@@ -156,6 +161,12 @@ export const handler = async (event) => {
   data = data["dynamodb"]["NewImage"]
   const id = data["id"]["S"]
   console.log("Event", data);
+  if (AUDIT_DISABLED) {
+    // Mark the session record so the frontend stops waiting and can show
+    // that session activity logging is disabled for this deployment.
+    console.log("CloudTrail Lake audit is disabled - skipping query");
+    return updateItem(id, "disabled");
+  }
   const queryId = await start_query(data);
   let status = await get_query_status(queryId);
   while (status) {

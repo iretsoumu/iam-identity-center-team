@@ -105,6 +105,7 @@ function EmptyState({ title, subtitle, action }) {
 
 function Logs(props) {
   const [allItems, setAllItems] = useState([]);
+  const [auditDisabled, setAuditDisabled] = useState(false);
   const csvLink = useRef();
   const [preferences, setPreferences] = useState({
     pageSize: 10,
@@ -120,7 +121,14 @@ function Logs(props) {
     paginationProps,
   } = useCollection(allItems, {
     filtering: {
-      empty: <EmptyState title="No logs" subtitle="No logs to display" />,
+      empty: auditDisabled ? (
+        <EmptyState
+          title="Session activity logging is disabled"
+          subtitle="CloudTrail Lake is not configured for this deployment. Review session activity in CloudTrail (event history or trail) of the target account."
+        />
+      ) : (
+        <EmptyState title="No logs" subtitle="No logs to display" />
+      ),
       noMatch: (
         <EmptyState
           title="No matches"
@@ -205,6 +213,14 @@ function Logs(props) {
   }
   
   function getLogs(queryId) {
+    if (queryId === "disabled") {
+      // CloudTrail Lake audit is disabled for this deployment
+      setAuditDisabled(true);
+      setAllItems([]);
+      setTableLoading(false);
+      setRefreshLoading(false);
+      return;
+    }
     let args = {
       queryId: queryId,
     };

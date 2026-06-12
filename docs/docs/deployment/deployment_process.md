@@ -54,7 +54,7 @@ Update the parameters in the **parameters.sh** file as follows:
 - **TEAM_ACCOUNT_PROFILE** - Named profile for TEAM Application deployment Account
 - **TEAM_ADMIN_GROUP** - Name of IAM Identity Center group for TEAM administrators
 - **TEAM_AUDITOR_GROUP** - Name of IAM Identity Center group for TEAM auditors
-- **CLOUDTRAIL_AUDIT_LOGS** - ARN of organization CloudTrail Lake event datastore
+- **CLOUDTRAIL_AUDIT_LOGS** - ARN of organization CloudTrail Lake event datastore, or `disabled` to deploy without CloudTrail Lake (required for AWS accounts where CloudTrail Lake is no longer available to new customers; turns off the in-app session activity view)
 - **SECRET_NAME** - Name of the Secret stored in AWS Secret Manager
 > When using Github as the external repository ensure you use Tokens (classic) (https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#personal-access-tokens-classic) instead of Fine-grained tokens
 
