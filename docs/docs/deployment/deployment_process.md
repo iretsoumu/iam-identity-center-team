@@ -54,7 +54,7 @@ Update the parameters in the **parameters.sh** file as follows:
 - **TEAM_ACCOUNT_PROFILE** - Named profile for TEAM Application deployment Account
 - **TEAM_ADMIN_GROUP** - Name of IAM Identity Center group for TEAM administrators
 - **TEAM_AUDITOR_GROUP** - Name of IAM Identity Center group for TEAM auditors
-- **CLOUDTRAIL_AUDIT_LOGS** - ARN of organization CloudTrail Lake event datastore, or `disabled` to deploy without CloudTrail Lake (required for AWS accounts where CloudTrail Lake is no longer available to new customers; turns off the in-app session activity view)
+- **CLOUDTRAIL_AUDIT_LOGS** - Session activity audit backend. Recommended: `cwlogs` (Amazon CloudWatch Logs, the successor to CloudTrail Lake which is closed to new customers as of 2026/5/31). Other values: the ARN of an existing CloudTrail Lake event data store (or `read`/`write`/`read_write`/`none` to create one — existing Lake customers only); or `disabled` to deploy without a query backend (turns off the in-app session activity view). See [prerequisites](prerequisites.md) for details.
 - **SECRET_NAME** - Name of the Secret stored in AWS Secret Manager
 > When using Github as the external repository ensure you use Tokens (classic) (https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#personal-access-tokens-classic) instead of Fine-grained tokens
 
@@ -75,7 +75,9 @@ TEAM_ACCOUNT_PROFILE=TeamAccountProfileName
 TEAM_ADMIN_GROUP="team_admin_group_name"
 TEAM_AUDITOR_GROUP="team_auditor_group_name"
 TAGS="tag1=value1 tag2=value2"
-CLOUDTRAIL_AUDIT_LOGS=arn:aws:cloudtrail:us-east-1:123456789101:eventdatastore/e646f20d-7959-4682-be84-6c5b8a37cf15
+CLOUDTRAIL_AUDIT_LOGS=cwlogs
+# Optional: reuse an existing org-trail CloudWatch Logs log group (leave unset to have TEAM create one)
+# CLOUDWATCH_LOG_GROUP_NAME=aws-controltower/CloudTrailLogs
 UI_DOMAIN=portal.teamtest.online
 SECRET_NAME=TEAM-IDC-APP
 CACHE_TTL=604800

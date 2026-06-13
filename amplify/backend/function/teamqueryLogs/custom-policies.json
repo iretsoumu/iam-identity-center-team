@@ -1,7 +1,8 @@
 [
   {
     "Action": [
-      "cloudtrail:GetQueryResults"],
+      "cloudtrail:GetQueryResults",
+      "logs:GetQueryResults"],
     "Resource": ["*"]
   }
 ]

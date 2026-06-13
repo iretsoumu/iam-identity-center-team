@@ -33,11 +33,21 @@ parent: Solution deployment
   [As per AWS best practice](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_best-practices_mgmt-acct.html#best-practices_mgmt-use), it is not recommended to deploy resources in the organization management account. Designate a dedicated account for deploying the TEAM solution. We recommend that you do not deploy any other workloads in this account, and carefully manage users with access to this account based on a need-to-do principle.
   {: .note}
 
-### Cloudtrail Lake organization event datastore
-TEAM uses AWS CloudTrail Lake for querying, auditing and logging API activities and actions performed by a user during the period of elevated access.
-Create a Cloudtrail Lake organization event datastore in the dedicated TEAM account that stores all log events for all AWS account in your organization
+### Session activity audit backend
+TEAM queries CloudTrail to show the API activity performed by a user during a period of elevated access. Choose one of the backends below with the `CLOUDTRAIL_AUDIT_LOGS` parameter.
 
-> **Note:** AWS CloudTrail Lake is no longer available to new customers (announced 2026/5). If your organization cannot create a new event data store, set `CLOUDTRAIL_AUDIT_LOGS=disabled`. TEAM will deploy without CloudTrail Lake: the approval workflow works as normal, the in-app "Session activity" view is turned off, and session auditing should instead be performed by correlating TEAM request records with standard CloudTrail (event history or an organization trail) in the target accounts. Organizations that already use CloudTrail Lake can keep the existing behaviour by passing the ARN of an existing event data store.
+> **Important:** AWS CloudTrail Lake is no longer available to new customers (effective 2026/5/31). New deployments should use the **CloudWatch Logs** backend, which AWS recommends as the successor. Existing CloudTrail Lake customers can continue to use their event data store.
+
+**Option 1 (recommended) — Amazon CloudWatch Logs (`CLOUDTRAIL_AUDIT_LOGS=cwlogs`)**
+TEAM runs CloudWatch Logs Insights queries against a log group that receives CloudTrail (organization) events.
+- **Reuse an existing log group:** if you already deliver an organization trail to CloudWatch Logs, set `CloudWatchLogGroupName` to that log group's name. TEAM only needs `logs:StartQuery`/`logs:GetQueryResults` on it (granted automatically).
+- **Let TEAM create one:** leave `CloudWatchLogGroupName` empty. TEAM creates an organization CloudTrail trail, an S3 bucket, and a CloudWatch Logs log group in the dedicated TEAM account. This requires the TEAM account to be the organization management account **or** a registered delegated administrator for CloudTrail (the same delegation TEAM already uses — see above).
+
+**Option 2 — existing CloudTrail Lake event data store**
+Create (or reuse) a CloudTrail Lake organization event data store in the dedicated TEAM account and pass either its ARN, or `read`/`write`/`read_write`/`none` to have TEAM create one. *Only available to existing CloudTrail Lake customers.*
+
+**Option 3 — disabled (`CLOUDTRAIL_AUDIT_LOGS=disabled`)**
+TEAM deploys without any query backend. The approval workflow is unaffected; the in-app "Session activity" view is turned off and shows a notice. Audit by correlating TEAM request records with standard CloudTrail in the target accounts.
 
 ## AWS Secrets Manager
 TEAM allows you to use external repositories for deploying the solution. 

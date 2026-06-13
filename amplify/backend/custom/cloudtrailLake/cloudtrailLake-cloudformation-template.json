@@ -1,12 +1,19 @@
 {
   "AWSTemplateFormatVersion":"2010-09-09",
+  "Description":"TEAM session audit backend. Supports CloudTrail Lake (existing customers), CloudWatch Logs (recommended successor since CloudTrail Lake closed to new customers 2026-05-31), or disabled.",
   "Parameters":{
     "env":{
       "Type":"String"
     },
     "CloudTrailAuditLogs":{
       "Type":"String",
-      "AllowedPattern": "(disabled|read_write|read|write|none|arn.*)"
+      "AllowedPattern": "(disabled|cwlogs|read_write|read|write|none|arn.*)",
+      "Description":"Audit backend selector. 'cwlogs' = CloudWatch Logs (uses ExistingLogGroupName, or creates a new org trail + log group when empty). 'disabled' = no audit. read/write/read_write/none = create a CloudTrail Lake EDS (existing customers only). An eventdatastore ARN = use an existing Lake EDS."
+    },
+    "ExistingLogGroupName":{
+      "Type":"String",
+      "Default":"",
+      "Description":"When CloudTrailAuditLogs=cwlogs: name of an existing CloudWatch Logs log group that already receives CloudTrail (org) events. Leave empty to have TEAM create a new organization trail + log group."
     }
   },
   "Conditions":{
@@ -44,6 +51,40 @@
           "Ref":"CloudTrailAuditLogs"
         },
         "none"
+      ]
+    },
+    "IsCwLogsMode":{
+      "Fn::Equals":[
+        {
+          "Ref":"CloudTrailAuditLogs"
+        },
+        "cwlogs"
+      ]
+    },
+    "HasExistingLogGroup":{
+      "Fn::Not":[
+        {
+          "Fn::Equals":[
+            {
+              "Ref":"ExistingLogGroupName"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "CreateCwLogsTrail":{
+      "Fn::And":[
+        {
+          "Condition":"IsCwLogsMode"
+        },
+        {
+          "Fn::Not":[
+            {
+              "Condition":"HasExistingLogGroup"
+            }
+          ]
+        }
       ]
     },
     "CreateEventDataStore": {
@@ -150,11 +191,170 @@
           }
         ]
       }
+    },
+    "AuditLogGroup":{
+      "Condition":"CreateCwLogsTrail",
+      "Type":"AWS::Logs::LogGroup",
+      "Properties":{
+        "LogGroupName":{
+          "Fn::Sub":"/aws/cloudtrail/${AWS::StackName}"
+        },
+        "RetentionInDays":90
+      }
+    },
+    "AuditTrailBucket":{
+      "Condition":"CreateCwLogsTrail",
+      "Type":"AWS::S3::Bucket",
+      "DeletionPolicy":"Retain",
+      "UpdateReplacePolicy":"Retain",
+      "Properties":{
+        "BucketEncryption":{
+          "ServerSideEncryptionConfiguration":[
+            {
+              "ServerSideEncryptionByDefault":{
+                "SSEAlgorithm":"AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration":{
+          "BlockPublicAcls":true,
+          "BlockPublicPolicy":true,
+          "IgnorePublicAcls":true,
+          "RestrictPublicBuckets":true
+        }
+      }
+    },
+    "AuditTrailBucketPolicy":{
+      "Condition":"CreateCwLogsTrail",
+      "Type":"AWS::S3::BucketPolicy",
+      "Properties":{
+        "Bucket":{
+          "Ref":"AuditTrailBucket"
+        },
+        "PolicyDocument":{
+          "Version":"2012-10-17",
+          "Statement":[
+            {
+              "Sid":"CloudTrailAclCheck",
+              "Effect":"Allow",
+              "Principal":{
+                "Service":"cloudtrail.amazonaws.com"
+              },
+              "Action":"s3:GetBucketAcl",
+              "Resource":{
+                "Fn::GetAtt":["AuditTrailBucket","Arn"]
+              },
+              "Condition":{
+                "StringEquals":{
+                  "aws:SourceArn":{
+                    "Fn::Sub":"arn:${AWS::Partition}:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${AWS::StackName}-audit-trail"
+                  }
+                }
+              }
+            },
+            {
+              "Sid":"CloudTrailWrite",
+              "Effect":"Allow",
+              "Principal":{
+                "Service":"cloudtrail.amazonaws.com"
+              },
+              "Action":"s3:PutObject",
+              "Resource":{
+                "Fn::Sub":"${AuditTrailBucket.Arn}/AWSLogs/*"
+              },
+              "Condition":{
+                "StringEquals":{
+                  "s3:x-amz-acl":"bucket-owner-full-control",
+                  "aws:SourceArn":{
+                    "Fn::Sub":"arn:${AWS::Partition}:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${AWS::StackName}-audit-trail"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "TrailToLogsRole":{
+      "Condition":"CreateCwLogsTrail",
+      "Type":"AWS::IAM::Role",
+      "Properties":{
+        "AssumeRolePolicyDocument":{
+          "Version":"2012-10-17",
+          "Statement":[
+            {
+              "Effect":"Allow",
+              "Principal":{
+                "Service":"cloudtrail.amazonaws.com"
+              },
+              "Action":"sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies":[
+          {
+            "PolicyName":"cloudtrail-to-cwlogs",
+            "PolicyDocument":{
+              "Version":"2012-10-17",
+              "Statement":[
+                {
+                  "Effect":"Allow",
+                  "Action":[
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource":{
+                    "Fn::Sub":"arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/cloudtrail/${AWS::StackName}:log-stream:*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "AuditTrail":{
+      "Condition":"CreateCwLogsTrail",
+      "Type":"AWS::CloudTrail::Trail",
+      "DependsOn":["AuditTrailBucketPolicy"],
+      "Properties":{
+        "TrailName":{
+          "Fn::Sub":"${AWS::StackName}-audit-trail"
+        },
+        "S3BucketName":{
+          "Ref":"AuditTrailBucket"
+        },
+        "IsLogging":true,
+        "IsMultiRegionTrail":true,
+        "IncludeGlobalServiceEvents":true,
+        "IsOrganizationTrail":{
+          "Fn::If":[
+            "IsOrganizationsSupported",
+            true,
+            {
+              "Ref":"AWS::NoValue"
+            }
+          ]
+        },
+        "CloudWatchLogsLogGroupArn":{
+          "Fn::GetAtt":["AuditLogGroup","Arn"]
+        },
+        "CloudWatchLogsRoleArn":{
+          "Fn::GetAtt":["TrailToLogsRole","Arn"]
+        },
+        "EventSelectors":[
+          {
+            "ReadWriteType":"All",
+            "IncludeManagementEvents":true
+          }
+        ]
+      }
     }
   },
   "Outputs":{
     "EventDataStoreOutput":{
-      "Description":"The event data store ID",
+      "Description":"Audit backend descriptor consumed by teamgetLogs/teamqueryLogs: a Lake event data store id, 'cwlogs:<logGroupName>', or 'disabled'.",
       "Value": {
         "Fn::If": [
           "CreateEventDataStore",
@@ -162,7 +362,31 @@
             "Ref": "myEventDataStore"
           },
           {
-            "Ref": "CloudTrailAuditLogs"
+            "Fn::If": [
+              "IsCwLogsMode",
+              {
+                "Fn::Join": [
+                  "",
+                  [
+                    "cwlogs:",
+                    {
+                      "Fn::If": [
+                        "CreateCwLogsTrail",
+                        {
+                          "Ref": "AuditLogGroup"
+                        },
+                        {
+                          "Ref": "ExistingLogGroupName"
+                        }
+                      ]
+                    }
+                  ]
+                ]
+              },
+              {
+                "Ref": "CloudTrailAuditLogs"
+              }
+            ]
           }
         ]
       }

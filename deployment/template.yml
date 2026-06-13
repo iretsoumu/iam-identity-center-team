@@ -6,8 +6,13 @@ Parameters:
     Description: IAM IDC Login URL
   CloudTrailAuditLogs:
     Type: "String"
-    AllowedPattern: "(disabled|read_write|read|write|none|arn.*)"
-    Description: Which events should be logged on the TEAM Application Cloudtrail Lake EventDataStore.  Acceptable values are "read","write","read_write", and "none".  You may also enter the arn of an existing Cloudtrail Lake EDS. Use "disabled" to skip CloudTrail Lake entirely (no EventDataStore is created and the session activity feature is turned off) - for environments where CloudTrail Lake is no longer available to new customers.
+    AllowedPattern: "(disabled|cwlogs|read_write|read|write|none|arn.*)"
+    Description: >-
+      Session audit backend. "cwlogs" = use Amazon CloudWatch Logs (the recommended successor now that CloudTrail Lake is closed to new customers as of 2026-05-31); pair with CloudWatchLogGroupName to reuse an existing log group, or leave it empty to create a new organization trail + log group. "disabled" = no session activity logging. "read"/"write"/"read_write"/"none" create a CloudTrail Lake EventDataStore (existing Lake customers only). You may also enter the ARN of an existing CloudTrail Lake EDS.
+  CloudWatchLogGroupName:
+    Type: "String"
+    Default: ""
+    Description: Only used when CloudTrailAuditLogs=cwlogs. Name of an existing CloudWatch Logs log group that already receives CloudTrail (organization) events. Leave empty to have TEAM create a new organization trail, S3 bucket, and log group in this account.
   teamAdminGroup:
     Type: String
     Description: TEAM application Admin group
@@ -160,6 +165,8 @@ Resources:
             - IsEmptyCloudTrailAuditLogs
             - "read_write"
             - !Ref CloudTrailAuditLogs
+        - Name: CLOUDTRAIL_CWLOGS_GROUP
+          Value: !Ref CloudWatchLogGroupName
         - Name: TEAM_ADMIN_GROUP
           Value: !Ref teamAdminGroup
         - Name: TEAM_AUDITOR_GROUP

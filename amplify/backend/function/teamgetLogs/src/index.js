@@ -21,23 +21,29 @@ import {
   DescribeQueryCommand,
 } from "@aws-sdk/client-cloudtrail"
 
+import {
+  CloudWatchLogsClient,
+  StartQueryCommand as CwStartQueryCommand,
+  GetQueryResultsCommand as CwGetQueryResultsCommand,
+} from "@aws-sdk/client-cloudwatch-logs"
+
 const { Sha256 } = crypto;
 const REGION = process.env.REGION;
-// CloudTrail Lake is no longer available to new AWS customers. When the
-// cloudtrailLake custom resource is deployed with CloudTrailAuditLogs="disabled",
-// no EventDataStore exists and EVENT_DATA_STORE contains the literal "disabled".
+
+// EVENT_DATA_STORE carries the audit backend descriptor produced by the
+// cloudtrailLake custom resource:
+//   - "disabled"            -> session activity logging is turned off
+//   - "cwlogs:<logGroup>"   -> query Amazon CloudWatch Logs (CloudTrail Lake successor)
+//   - "<eds-id-or-arn>"     -> query a CloudTrail Lake event data store
 const RAW_EVENT_DATA_STORE = process.env.EVENT_DATA_STORE || "";
 const AUDIT_DISABLED = RAW_EVENT_DATA_STORE === "" || RAW_EVENT_DATA_STORE === "disabled";
-const EventDataStore = AUDIT_DISABLED ? null : RAW_EVENT_DATA_STORE.split("/").pop();
+const IS_CWLOGS = RAW_EVENT_DATA_STORE.startsWith("cwlogs:");
+const LOG_GROUP_NAME = IS_CWLOGS ? RAW_EVENT_DATA_STORE.slice("cwlogs:".length) : null;
+const EventDataStore = (AUDIT_DISABLED || IS_CWLOGS) ? null : RAW_EVENT_DATA_STORE.split("/").pop();
 const GRAPHQL_ENDPOINT = process.env.API_TEAM_GRAPHQLAPIENDPOINTOUTPUT;
 
-// const {
-//   CloudTrailClient,
-//   StartQueryCommand,
-//   DescribeQueryCommand,
-// } = require("@aws-sdk/client-cloudtrail");
-
 const client = new CloudTrailClient({ region: REGION });
+const cwClient = new CloudWatchLogsClient({ region: REGION });
 
 const query = /* GraphQL */ `
   mutation UpdateSessions(
@@ -69,7 +75,7 @@ const updateItem = async (id, queryId) => {
     input: {
       id: id,
       queryId: queryId
-    } 
+    }
   }
 
   const endpoint = new URL(GRAPHQL_ENDPOINT);
@@ -123,6 +129,7 @@ const updateItem = async (id, queryId) => {
   };
 };
 
+// ---------- CloudTrail Lake backend ----------
 
 const get_query_status = async (queryId) => {
   try {
@@ -156,17 +163,83 @@ const start_query = async (event) => {
   }
 };
 
+// ---------- CloudWatch Logs backend (CloudTrail Lake successor) ----------
+
+// Escape values interpolated into a Logs Insights quoted-string match.
+const escapeForQuery = (s) => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+const start_query_cwlogs = async (event) => {
+  const startTime = event["startTime"]["S"];
+  const endTime = event["endTime"]["S"];
+  const username = event["username"]["S"].replace('idc_', '');
+  const accountId = event["accountId"]["S"];
+  const role = event["role"]["S"];
+  // Logs Insights takes the time range as epoch seconds (not in the query string).
+  const startEpoch = Math.floor(Date.parse(startTime) / 1000);
+  const endEpoch = Math.floor(Date.parse(endTime) / 1000);
+  // Equivalent of the CloudTrail Lake SQL. CloudTrail events in CloudWatch Logs use
+  // camelCase field names (userIdentity, not useridentity). `like "..."` is a
+  // case-sensitive substring match.
+  const queryString =
+    `fields eventID, eventName, eventSource, eventTime` +
+    ` | filter userIdentity.principalId like "${escapeForQuery(':' + username)}"` +
+    ` and userIdentity.sessionContext.sessionIssuer.arn like "${escapeForQuery(role)}"` +
+    ` and recipientAccountId = "${escapeForQuery(accountId)}"` +
+    ` | sort eventTime desc | limit 10000`;
+  try {
+    const command = new CwStartQueryCommand({
+      logGroupName: LOG_GROUP_NAME,
+      startTime: startEpoch,
+      endTime: endEpoch,
+      queryString: queryString,
+      limit: 10000,
+    });
+    const response = await cwClient.send(command);
+    return response.queryId;
+  } catch (err) {
+    console.log("Error", err);
+  }
+};
+
+const cw_query_status = async (queryId) => {
+  try {
+    const command = new CwGetQueryResultsCommand({ queryId });
+    const response = await cwClient.send(command);
+    return response.status; // Scheduled | Running | Complete | Failed | Cancelled | Timeout | Unknown
+  } catch (err) {
+    console.log("Error", err);
+  }
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const handler = async (event) => {
   let data = event["Records"].pop()
   data = data["dynamodb"]["NewImage"]
   const id = data["id"]["S"]
   console.log("Event", data);
+
   if (AUDIT_DISABLED) {
-    // Mark the session record so the frontend stops waiting and can show
-    // that session activity logging is disabled for this deployment.
-    console.log("CloudTrail Lake audit is disabled - skipping query");
+    // No audit backend: mark the session so the UI stops waiting and shows a notice.
+    console.log("Session activity audit is disabled - skipping query");
     return updateItem(id, "disabled");
   }
+
+  if (IS_CWLOGS) {
+    const queryId = await start_query_cwlogs(data);
+    if (!queryId) return;
+    // Bounded wait so logs are usually ready without a manual refresh. The queryId
+    // is persisted regardless, so the UI can fetch (or refresh) results afterwards.
+    const TERMINAL = ["Complete", "Failed", "Cancelled", "Timeout"];
+    for (let i = 0; i < 30; i++) {
+      const status = await cw_query_status(queryId);
+      if (!status || TERMINAL.includes(status)) break;
+      await sleep(2000);
+    }
+    return updateItem(id, queryId);
+  }
+
+  // CloudTrail Lake
   const queryId = await start_query(data);
   let status = await get_query_status(queryId);
   while (status) {

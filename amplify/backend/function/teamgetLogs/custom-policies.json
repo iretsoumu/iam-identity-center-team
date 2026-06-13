@@ -3,7 +3,10 @@
     "Action": [
       "cloudtrail:DescribeQuery",
       "cloudtrail:StartQuery",
-      "cloudtrail:GetQueryResults"],
+      "cloudtrail:GetQueryResults",
+      "logs:StartQuery",
+      "logs:GetQueryResults",
+      "logs:StopQuery"],
     "Resource": ["*"]
   }
 ]
